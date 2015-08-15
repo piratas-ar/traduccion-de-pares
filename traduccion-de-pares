@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -e
+DRYRUN=${DRYRUN:-false}
+GPG=${GPG:-false}
+
+usage() {
+  echo "$(basename "$0") instrucciones.txt pares.txt texto.txt coord@inacion.org"
+  exit 0
+}
+
+_gpg() {
+  if ${GPG}; then
+    gpg --sign --clear
+  else
+    cat
+  fi
+}
+
+test ${#@} -lt 4 && usage
+
+invitacion="${1}"; shift
+pares="${1}"; shift
+texto="${1}"; shift
+coordinacion="${1}"; shift
+
+test -f "${invitacion}"   || usage
+test -f "${pares}"        || usage
+test -f "${texto}"        || usage
+test -n "${coordinacion}" || usage
+
+pares_q="$(wc -l < "${pares}")"
+titulo="$(head -n1 "${texto}" | sed "s/^% //")"
+prefijo="${texto%.*}"
+
+# Dividir en párrafos
+parrafos_q=$(csplit --prefix="${prefijo}_parrafo_" --suffix-format="%02d.txt" "${texto}" /^$/ {*} | wc -l)
+
+# Y armar una cola y un listado de parrafos por tamaño (los mas grandes
+# primero)
+touch "${prefijo}_cola.txt"
+test -f "${prefijo}_parrafos.txt" \
+|| ls -S "${prefijo}_parrafo"*.txt >"${prefijo}_parrafos.txt"
+
+parrafos_corregidos=$(grep -c corregido "${prefijo}_cola.txt")
+let parrafos_faltantes=${parrafos_q}-${parrafos_corregidos}
+
+# Poner en cola significa elegir un parrafo al azar, pero que no esté en
+# la cola aun y asignarlo a unx par del listado.  Al hacer esto,
+# mandarle la petición por correo y esperar respuesta.
+
+# La cola lleva estos campos: parrafo, fecha, par, estado
+
+count=0
+head -n ${pares_q} "${prefijo}_parrafos.txt" \
+| while read _parrafo ; do
+  let count++ || true
+
+  # Obtener par
+  _par="$(sed -n "${count}p" "${pares}")"
+
+  ${DRYRUN} || echo -e "${_parrafo}\t$(date +%F)\t${_par}\tenviado" >>"${prefijo}_cola.txt"
+  ${DRYRUN} || echo "Enviando correo a ${_par}"
+
+  echo "From: ${coordinacion}"                      > "${prefijo}_${_par}.txt"
+  echo "To: ${_par}"                               >> "${prefijo}_${_par}.txt"
+  echo "Subject: Ayudame a corregir \"${titulo}\"" >> "${prefijo}_${_par}.txt"
+  echo "Content-Type: text/plain; charset=utf-8"   >> "${prefijo}_${_par}.txt"
+  echo ""                                          >> "${prefijo}_${_par}.txt"
+
+  sed -e "s/{{titulo}}/${titulo}/g" \
+      -e "s/{{posicion}}/${_parrafo}/g" \
+      -e "s/{{par}}/${_par}/g" \
+      -e "s/{{coordinacion}}/${coordinacion}/g" \
+      -e "s/{{parrafos_faltantes}}/${parrafos_faltantes}/g" \
+      -e "s/{{parrafos_q}}/${parrafos_q}/g" \
+      "${invitacion}" \
+      | cat - "${_parrafo}" \
+      | fmt -w 72 \
+      | _gpg                                       >> "${prefijo}_${_par}.txt"
+
+  ${DRYRUN} || sendmail -t < "${prefijo}_${_par}.txt"
+
+  echo "${prefijo}_${_par}.txt"
+done
+
+${DRYRUN} || sed "1,${pares_q}d" -i "${prefijo}_parrafos.txt"
