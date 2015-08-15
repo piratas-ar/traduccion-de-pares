@@ -43,3 +43,5 @@ corregidos se usan para control y cuenta de los párrafos faltantes.
 # TODO
 
 * Reciclar párrafos cuando no fueron respondidos.
+
+* Enviar de a dos párrafos cuando se trata de una corrección de traducción
